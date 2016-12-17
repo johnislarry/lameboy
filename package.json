@@ -1,0 +1,28 @@
+{
+  "name": "lameboy",
+  "version": "0.0.0",
+  "description": "A shitty gameboy emulator",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "repository": "x",
+  "keywords": [
+    "shitty",
+    "lame",
+    "emulator",
+    "gameboy"
+  ],
+  "author": "Max Sherman",
+  "license": "x",
+  "devDependencies": {
+    "@types/heap": "^0.2.28",
+    "@types/node": "0.0.1",
+    "electron": "^1.4.11",
+    "tslint": "^4.0.2",
+    "typescript": "^2.1.4"
+  },
+  "dependencies": {
+    "heap": "^0.2.6"
+  }
+}
