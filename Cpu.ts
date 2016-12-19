@@ -1,6 +1,7 @@
 import { Clock } from './Clock';
 import { Memory, Interrupt } from './Memory';
 import { RegisterStore } from './RegisterStore';
+import dedent = require('dedent');
 
 type OpcodeSize = 1 | 2 | 3;
 type OpcodeDuration = 4 | 8 | 12 | 16 | 20 | 24;
@@ -25,7 +26,7 @@ export class Cpu {
   constructor(clock: Clock, memory: Memory) {
     this._clock = clock;
     this._memory = memory;
-    this._regs = new RegisterStore();
+    this._regs = new RegisterStore(memory);
     this._ime = true;
   }
 
@@ -108,6 +109,23 @@ export class Cpu {
           return 12;
         },
       };
+      case 0x1A: return {
+        mnemonic: 'LD A,(DE)',
+        size: 1,
+        execute: () => {
+          this._regs.setA(this._memory.read(this._regs.getDe()));
+          return 8;
+        },
+      };
+      case 0x22: return {
+        mnemonic: 'LD (HL+),A',
+        size: 1,
+        execute: () => {
+          this._memory.write(this._regs.getHl(), this._regs.getA());
+          this._regs.incrHl();
+          return 8;
+        },
+      };
       case 0x28: return {
         mnemonic: 'JR Z,r8',
         size: 2,
@@ -119,6 +137,30 @@ export class Cpu {
           return 8;
         },
       };
+      case 0x3E: return {
+        mnemonic: 'LD A,d8',
+        size: 2,
+        execute: (args: number) => {
+          this._regs.setA(args);
+          return 8;
+        },
+      };
+      case 0xAE: return {
+        mnemonic: 'XOR (HL)',
+        size: 1,
+        execute: () => {
+          this._regs.xor(this._memory.read(this._regs.getHl()));
+          return 8;
+        },
+      };
+      case 0xB8: return {
+        mnemonic: 'CP B',
+        size: 1,
+        execute: () => {
+          this._regs.cmpB();
+          return 4;
+        },
+      };
       case 0xC3: return {
         mnemonic: 'JP a16',
         size: 3,
@@ -127,13 +169,90 @@ export class Cpu {
           return 16;
         },
       };
+      case 0xC5: return {
+        mnemonic: 'PUSH BC',
+        size: 1,
+        execute: () => {
+          this._regs.pushBc();
+          return 16;
+        },
+      };
+      case 0xCD: return {
+        mnemonic: 'CALL a16',
+        size: 3,
+        execute: (arg: number) => {
+          this._call(arg);
+          return 24;
+        },
+      };
+      case 0xCF: return {
+        mnemonic: 'RST 08H',
+        size: 1,
+        execute: () => {
+          this._call(0x08);
+          return 16;
+        },
+      };
+      case 0xD1: return {
+        mnemonic: 'POP DE',
+        size: 1,
+        execute: () => {
+          this._regs.popDe();
+          return 12;
+        },
+      };
+      case 0xD5: return {
+        mnemonic: 'PUSH DE',
+        size: 1,
+        execute: () => {
+          this._regs.pushDe();
+          return 16;
+        },
+      };
+      case 0xE5: return {
+        mnemonic: 'PUSH HL',
+        size: 1,
+        execute: () => {
+          this._regs.pushHl();
+          return 16;
+        },
+      };
+      case 0xEA: return {
+        mnemonic: 'LD (a16),A',
+        size: 3,
+        execute: (arg: number) => {
+          this._memory.write(arg, this._regs.getA());
+          return 16;
+        },
+      };
+      case 0xF0: return {
+        mnemonic: 'LDH A,(a8)',
+        size: 2,
+        execute: (arg) => {
+          this._regs.setA(this._memory.read(0xFF00 + arg));
+          return 12;
+        },
+      };
+      case 0xFF: return {
+        mnemonic: 'RST 38H',
+        size: 1,
+        execute: () => {
+          this._call(0x38);
+          return 16;
+        },
+      };
       default: {
-        throw new Error(
-          `\nUnimplemented instruction: 0x${decToHex(opcode)}` +
-          `\nat memory address: 0x${decToHex(this._regs.getPc())}`,
-        );
+        throw new Error(dedent`\n\n
+          Unimplemented instruction: 0x${decToHex(opcode)}
+          at memory address: 0x${decToHex(this._regs.getPc())}
+        `);
       }
     }
+  }
+
+  _call(addr: number): void {
+    this._regs.pushPc();
+    this._regs.setPc(addr);
   }
 }
 

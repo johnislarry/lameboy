@@ -93,6 +93,8 @@ export class Memory {
   read(addr: number): number {
     if (0x0 <= addr && addr < 0x4000) {
       return this._memory[addr];
+    } else if (0xFEA0 <= addr && addr < 0x10000) {
+      return this._memory[addr];
     }
     throw new Error(`Reading unsupported address: ${addr}`);
   }

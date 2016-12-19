@@ -23,6 +23,7 @@
     "typescript": "^2.1.4"
   },
   "dependencies": {
+    "dedent": "^0.6.0",
     "heap": "^0.2.6"
   }
 }

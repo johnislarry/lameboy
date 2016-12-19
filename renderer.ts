@@ -4,8 +4,8 @@ import {Cpu} from './Cpu.js';
 import {Clock} from './Clock.js';
 
 const rom = fs.readFileSync(__dirname + '/../pokemonblue.gb');
-const memory = new Memory(rom);
 const clock = new Clock();
+const memory = new Memory(rom, clock);
 const cpu = new Cpu(clock, memory);
 while (true) {
   cpu.next();
