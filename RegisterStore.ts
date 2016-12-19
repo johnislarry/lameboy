@@ -102,7 +102,7 @@ export class RegisterStore {
 
   xor(value: number): void {
     let flags = 0x0;
-    if (value ^ this.getA() === 0) {
+    if ((value ^ this.getA()) === 0) {
       flags |= ZERO_MASK;
     }
     this.setF(flags);
