@@ -7,6 +7,12 @@
         "sourceMap": true,
         "outDir": "./build",
         "alwaysStrict": true,
-        "strictNullChecks": true
+        "strictNullChecks": true,
+        "lib": [
+          "dom",
+          "es5",
+          "scripthost",
+          "es2015"
+        ]
     }
 }

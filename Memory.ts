@@ -44,15 +44,21 @@ const NR44 = 0xFF23;
 const NR50 = 0xFF24;
 const NR51 = 0xFF25;
 const NR52 = 0xFF26;
-const LCDC = 0xFF40;
+export const LCDC = 0xFF40;
+export const STAT = 0xFF41;
 const SCY = 0xFF42;
 const SCX = 0xFF43;
-const LYC = 0xFF45;
+export const LY = 0xFF44;
+export const LYC = 0xFF45;
 const BGP = 0xFF47;
 const OBP0 = 0xFF48;
 const OBP1 = 0xFF49;
 const WY = 0xFF4A;
 const WX = 0xFF4B;
+const BGPI = 0xFF68;
+const BGPD = 0xFF69;
+const OBPI = 0xFF6A;
+const OBPD = 0xFF6B;
 const IE = 0xFFFF;
 
 export class Memory {
@@ -60,11 +66,18 @@ export class Memory {
   _rom: Uint8Array;
   _controller: MemoryController;
   _clock: Clock;
+  _watches: Map<number, ((arg: number) => void)[]>;
+  _bgPalette: Uint8Array;
+  _spritePalette: Uint8Array;
 
   constructor(rom: Buffer, clock: Clock) {
     this._clock = clock;
     this._rom = Uint8Array.from(rom);
     this._memory = new Uint8Array(0x10000);
+    this._watches = new Map();
+    // TODO: These may not be initialized correctly.
+    this._bgPalette = new Uint8Array(0x40);
+    this._spritePalette = new Uint8Array(0x40);
     // TODO use the header to choose a memory controller at runtime.
     this._controller = new Mbc3();
     for (let i = 0; i < 0x4000; i++) {
@@ -75,6 +88,10 @@ export class Memory {
   }
 
   write(addr: number, data: number): void {
+    const watches = this._watches.get(addr);
+    if (watches != null) {
+      watches.forEach(watch => watch(data));
+    }
     if (0x0 <= addr && addr < 0x2000) {
       this._controller.enableRam(data);
     } else if (0x2000 <= addr && addr < 0x4000) {
@@ -83,6 +100,12 @@ export class Memory {
       this._controller.selectRamBank(data);
     } else if (0x6000 <= addr && addr < 0x8000) {
       this._controller.latchClockData(data);
+    } else if (addr === BGPD) {
+      this._writeBgpd(data);
+    } else if (addr === OBPD) {
+      this._writeObpd(data);
+    } else if (addr === LCDC) {
+      this._memory[LCDC] = 0x0;
     } else if (addr === DIV) {
       this._memory[DIV] = 0x0;
     } else {
@@ -91,12 +114,56 @@ export class Memory {
   }
 
   read(addr: number): number {
-    if (0x0 <= addr && addr < 0x4000) {
-      return this._memory[addr];
-    } else if (0xFEA0 <= addr && addr < 0x10000) {
+    if (0x4000 <= addr && addr < 0x8000) {
+      throw new Error(`Reading unsupported address: ${addr}`);
+    } else if (addr === OBPD) {
+      return this._readObpd();
+    } else if (addr === BGPD) {
+      return this._readBgpd();
+    } else {
       return this._memory[addr];
     }
-    throw new Error(`Reading unsupported address: ${addr}`);
+  }
+
+  _readBgpd(): number {
+    const paletteIndex = this._memory[BGPI];
+    const index = paletteIndex & 0x3F;
+    return this._bgPalette[index];
+  }
+
+  _readObpd(): number {
+    const paletteIndex = this._memory[OBPI];
+    const index = paletteIndex & 0x3F;
+    return this._spritePalette[index];
+  }
+
+  _writeObpd(val: number): void {
+    const paletteIndex = this._memory[OBPI];
+    this._spritePalette[paletteIndex] = val;
+    const shouldIncrement = Boolean(this._memory[OBPI] & 0x80);
+    if (shouldIncrement) {
+      // NOTE: this can overflow if the programmer doesn't manually reset it.
+      this._memory[OBPI]++;
+    }
+  }
+
+  _writeBgpd(val: number): void {
+    const paletteIndex = this._memory[BGPI];
+    this._bgPalette[paletteIndex] = val;
+    const shouldIncrement = Boolean(this._memory[BGPI] & 0x80);
+    if (shouldIncrement) {
+      // NOTE: this can overflow if the programmer doesn't manually reset it.
+      this._memory[BGPI]++;
+    }
+  }
+
+  watch(addr: number, cb: (val: number) => void): void {
+    const watches = this._watches.get(addr);
+    if (watches == null) {
+      this._watches.set(addr, [cb]);
+    } else {
+      watches.push(cb);
+    }
   }
 
   getInterruptInfo(): InterruptInfo {
@@ -191,7 +258,7 @@ export class Memory {
     this.write(NR50, 0x77);
     this.write(NR51, 0xF3);
     this.write(NR52, 0xF1);
-    this.write(LCDC, 0x91);
+    this.write(STAT, 0x91);
     this.write(SCY, 0x00);
     this.write(SCX, 0x00);
     this.write(LYC, 0x00);
