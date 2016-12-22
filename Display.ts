@@ -1,5 +1,5 @@
 import { Clock } from './Clock';
-import { Memory, LY, LYC, LCDC, STAT } from './Memory';
+import { Memory, Color, LY, LYC, LCDC, STAT } from './Memory';
 
 type ModeToBits = {
   hBlank: 0,
@@ -32,14 +32,16 @@ export class Display {
   _clock: Clock;
   _memory: Memory;
   _canvasContext: CanvasRenderingContext2D;
-  _buffer: Uint8ClampedArray;
+  _fullBuffer: Uint8Array;
+  _visibleBuffer: Uint8ClampedArray;
   _mode: Mode;
   _displayEnabled: boolean;
 
   constructor(clock: Clock, memory: Memory) {
     this._clock = clock;
     this._memory = memory;
-    this._buffer = new Uint8ClampedArray(SCREEN_X * SCREEN_Y);
+    this._fullBuffer = new Uint8Array(0x100 * 0x100 * 4);
+    this._visibleBuffer = new Uint8ClampedArray(SCREEN_X * SCREEN_Y);
     this._canvasContext = this._createCanvas();
     this._displayEnabled = true;
     this._handleMode('searching');
@@ -78,15 +80,95 @@ export class Display {
         break;
       }
       case 'vBlank': {
+        this._draw();
         this._memory.requestInterrupt('vBlank');
         this._clock.schedule(VBLANK_TIME, () => this._handleMode('searching'));
-        this._draw();
         break;
       }
       default: throw new Error(`unrecognized mode: ${mode}`);
     }
     this._setStatFlags(mode);
     this._requestInterrupt(mode);
+  }
+
+  _readLine(): void {
+    // Draw the background
+    // TODO window and sprites
+    const bgTileMapSelect = Boolean(this._memory.read(LCDC) & 0x8);
+    if (bgTileMapSelect) {
+      // Tile map at: 9C00-9FFF.
+      this._tileMap(
+        addr => this._memory.readVram0(0x9C00 + addr),
+        addr => this._memory.readVram1(0x9C00 + addr),
+      );
+    } else {
+      // Tile map at: 9800-9BFF.
+      this._tileMap(
+        addr => this._memory.readVram0(0x9800 + addr),
+        addr => this._memory.readVram1(0x9800 + addr),
+      );
+    }
+  }
+
+  _tileMap(
+    readTileMap0: (addr: number) => number,
+    readTileMap1: (addr: number) => number,
+  ): void {
+    const tileDataSelect = Boolean(this._memory.read(LCDC) & 0x10);
+    if (tileDataSelect) {
+      // Tile data: 8000-8FFF, unsigned.
+      // TODO only load the needed line, not the whole buffer.
+      for (let tileIndex = 0; tileIndex < 0x400; tileIndex++) {
+        const tileOffset = readTileMap0(0x9C00 + tileIndex);
+        const otherData = readTileMap1(0x9C00 + tileIndex);
+        // TODO respect the rest of the `otherData`.
+        const paletteIndex = otherData & 0x7;
+        const colors = this._memory.getBgPaletteColors(paletteIndex);
+        const isTileVram1 = Boolean(otherData & 0x8);
+        if (isTileVram1) {
+          this._putTileData(
+            addr => this._memory.readVram1(0x8000 + tileOffset + addr),
+            tileIndex,
+            colors,
+          );
+        } else {
+          this._putTileData(
+            addr => this._memory.readVram0(0x8000 + tileOffset + addr),
+            tileIndex,
+            colors,
+          );
+        }
+
+      }
+    } else {
+      // Tile data: 8800-97FF, signed.
+    }
+  }
+
+  _putTileData(
+    readVram: (addr: number) => number,
+    tileIndex: number,
+    colors: Color[],
+  ): void {
+    for (let j = 0; j < 16; j += 2) {
+      const byte0 = readVram(j);
+      const byte1 = readVram(j + 1);
+      for (let k = 0; k < 8; k++) {
+        let hi = byte1 & 0x1;
+        let lo = byte0 & 0x1;
+        const colorIndex = (hi << 1) | lo;
+        const color = colors[colorIndex];
+        // TODO ugh
+        const bufferIndex =
+          4 * ((Math.floor(tileIndex / 0x20) * 0x20) + (tileIndex % 0x20) + Math.floor(j / 2) * k);
+        this._fullBuffer[bufferIndex] = color.red;
+        this._fullBuffer[bufferIndex + 1] = color.green;
+        this._fullBuffer[bufferIndex + 2] = color.blue;
+        this._fullBuffer[bufferIndex + 3] = 0xFF;
+        lo = lo >> 1;
+        hi = hi >> 1;
+      }
+    }
   }
 
   _onLcdcWrite(val: number): void {
@@ -134,19 +216,7 @@ export class Display {
   }
 
   _draw(): void {
-    const imageData = new ImageData(this._buffer, SCREEN_X, SCREEN_Y);
+    const imageData = new ImageData(this._visibleBuffer, SCREEN_X, SCREEN_Y);
     this._canvasContext.putImageData(imageData, 0, 0);
-  }
-
-  _drawRow(): void {
-    const data: number[] = [];
-    for (let y = 0; y < SCREEN_Y; y++) {
-      for (let x = 0; x < SCREEN_X; x++) {
-        data.push(Math.floor(Math.random() * 0xFF)); // R
-        data.push(Math.floor(Math.random() * 0xFF)); // G
-        data.push(Math.floor(Math.random() * 0xFF)); // B
-        data.push(Math.floor(Math.random() * 0xFF)); // A
-      }
-    }
   }
 }
