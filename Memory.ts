@@ -66,10 +66,11 @@ const BGPI = 0xFF68;
 const BGPD = 0xFF69;
 const OBPI = 0xFF6A;
 const OBPD = 0xFF6B;
+const SVBK = 0xFF70;
 const IE = 0xFFFF;
 
 export class Memory {
-  _memory: Uint8Array;
+  _romBank0: Uint8Array;
   _rom: Uint8Array;
   _controller: MemoryController;
   _clock: Clock;
@@ -77,20 +78,29 @@ export class Memory {
   _bgPalette: Uint8Array;
   _spritePalette: Uint8Array;
   _vramBanks: [Uint8Array, Uint8Array];
+  _hram: Uint8Array;
+  _wramBank0: Uint8Array;
+  _wramBanks: Uint8Array[];
 
   constructor(rom: Buffer, clock: Clock) {
     this._clock = clock;
     this._rom = Uint8Array.from(rom);
-    this._memory = new Uint8Array(0x10000);
+    this._romBank0 = new Uint8Array(0x4000);
     this._watches = new Map();
+    this._wramBank0 = new Uint8Array(0x1000);
+    this._wramBanks = [];
+    for (let i = 0; i < 7; i++) {
+      this._wramBanks[i] = new Uint8Array(0x1000);
+    }
     // TODO: These may not be initialized correctly.
     this._bgPalette = new Uint8Array(0x40);
     this._spritePalette = new Uint8Array(0x40);
-    this._vramBanks = [new Uint8Array(0x4000), new Uint8Array(0x4000)];
+    this._vramBanks = [new Uint8Array(0x2000), new Uint8Array(0x2000)];
     // TODO use the header to choose a memory controller at runtime.
     this._controller = new Mbc3();
+    this._hram = new Uint8Array(0x100);
     for (let i = 0; i < 0x4000; i++) {
-      this._memory[i] = this._rom[i];
+      this._romBank0[i] = this._rom[i];
     }
     this._initialize();
     this._scheduleTimers();
@@ -109,35 +119,77 @@ export class Memory {
       this._controller.selectRamBank(data);
     } else if (0x6000 <= addr && addr < 0x8000) {
       this._controller.latchClockData(data);
-    } else if (0x8000 <= addr && addr < 0x10000) {
+    } else if (0x8000 <= addr && addr < 0xA000) {
       this._writeVram(addr, data);
-    } else if (addr === BGPD) {
-      this._writeBgpd(data);
-    } else if (addr === OBPD) {
-      this._writeObpd(data);
-    } else if (addr === LY) {
-      this._memory[LY] = 0x0;
-    } else if (addr === LCDC) {
-      this._memory[LCDC] = 0x0;
-    } else if (addr === DIV) {
-      this._memory[DIV] = 0x0;
+    } else if (0xC000 <= addr && addr < 0xD000) {
+      this._wramBank0[addr - 0xC000] = data;
+    } else if (0xD000 <= addr && addr < 0xE000) {
+      this._writeWram(addr, data);
+    } else if (0xFF00 <= addr && addr < 0x10000) {
+      if (addr === BGPD) {
+        this._writeBgpd(data);
+      } else if (addr === OBPD) {
+        this._writeObpd(data);
+      } else if (addr === LY) {
+        this._writeHram(LY, 0x0);
+      } else if (addr === LCDC) {
+        this._writeHram(LCDC, 0x0);
+      } else if (addr === DIV) {
+        this._writeHram(DIV, 0x0);
+      } else {
+        this._writeHram(addr, data);
+      }
     } else {
-      this._memory[addr] = data;
+      throw new Error(`unsupported write at: ${addr}`);
     }
   }
 
   read(addr: number): number {
-    if (0x4000 <= addr && addr < 0x8000) {
+    if (0x0 <= addr && addr < 0x4000) {
+      return this._romBank0[addr];
+    } else if (0x4000 <= addr && addr < 0x8000) {
       throw new Error(`Reading unsupported address: ${addr}`);
-    } else if (0x8000 <= addr && addr < 0x10000) {
+    } else if (0x8000 <= addr && addr < 0xA000) {
       return this._readVram(addr);
-    } else if (addr === OBPD) {
-      return this._readObpd();
-    } else if (addr === BGPD) {
-      return this._readBgpd();
+    } else if (0xC000 <= addr && addr < 0xD000) {
+      return this._wramBank0[addr - 0xC000];
+    } else if (0xD000 <= addr && addr < 0xE000) {
+      return this._readWram(addr);
+    } else if (0xFF00 <= addr && addr < 0x10000) {
+      if (addr === OBPD) {
+        return this._readObpd();
+      } else if (addr === BGPD) {
+        return this._readBgpd();
+      } else {
+        return this._readHram(addr);
+      }
     } else {
-      return this._memory[addr];
+      throw new Error(`Reading unsupported address: ${addr}`);
     }
+  }
+
+  _writeWram(addr: number, data: number): void {
+    const svbk = (this._readHram(SVBK) & 0x7);
+    if (svbk === 0) {
+      this._wramBanks[1][addr - 0xD000] = data;
+    } else {
+      this._wramBanks[svbk][addr - 0xD000] = data;
+    }
+  }
+
+  _readWram(addr: number): number {
+    const svbk = (this._readHram(SVBK) & 0x7);
+    if (svbk === 0) {
+      return this._wramBanks[1][addr - 0xD000];
+    } else {
+      return this._wramBanks[svbk][addr - 0xD000];
+    }
+  }
+  _writeHram(addr: number, data: number): void {
+    this._hram[addr - 0xFF00] = data;
+  }
+  _readHram(addr: number): number {
+    return this._hram[addr - 0xFF00];
   }
 
   getBgPaletteColors(index: number): Color[] {
@@ -167,15 +219,15 @@ export class Memory {
   }
 
   _writeVram(addr: number, data: number): void {
-    this._vramBanks[this._getVramBank()][addr] = data;
+    this._vramBanks[this._getVramBank()][addr - 0x8000] = data;
   }
 
   _readVram(addr: number): number {
-    return this._vramBanks[this._getVramBank()][addr];
+    return this._vramBanks[this._getVramBank()][addr - 0x8000];
   }
 
   _getVramBank(): number {
-    return this._memory[VBK] & 0x1;
+    return this._romBank0[VBK] & 0x1;
   }
 
   _readBgpd(): number {
@@ -187,7 +239,7 @@ export class Memory {
   }
 
   _readPaletteData(indexReg: number, palette: Uint8Array): number {
-    const paletteIndex = this._memory[indexReg];
+    const paletteIndex = this._romBank0[indexReg];
     const index = paletteIndex & 0x3F;
     return palette[index];
   }
@@ -201,12 +253,12 @@ export class Memory {
   }
 
   _writePaletteData(val: number, indexReg: number, palette: Uint8Array): void {
-    const paletteIndex = this._memory[indexReg];
+    const paletteIndex = this._romBank0[indexReg];
     palette[paletteIndex] = val;
-    const shouldIncrement = Boolean(this._memory[indexReg] & 0x80);
+    const shouldIncrement = Boolean(this._romBank0[indexReg] & 0x80);
     if (shouldIncrement) {
       // NOTE: this can overflow if the programmer doesn't manually reset it.
-      this._memory[indexReg]++;
+      this._romBank0[indexReg]++;
     }
   }
 
@@ -259,18 +311,18 @@ export class Memory {
   }
 
   _incrementDiv(): void {
-    const time = this._memory[DIV];
-    this._memory[DIV] = (time + 1) % 0x100;
+    const time = this._romBank0[DIV];
+    this._romBank0[DIV] = (time + 1) % 0x100;
     this._clock.schedule(hzToCycles(DIV_FREQ), () => this._incrementDiv());
   }
 
   _incrementTima(): void {
-    const timerEnable = Boolean(this._memory[TAC] & 0x4);
+    const timerEnable = Boolean(this._romBank0[TAC] & 0x4);
     if (timerEnable) {
-      const time = this._memory[TIMA];
-      this._memory[TIMA] = (time + 1) % 0x100;
-      if (this._memory[TIMA] === 0) {
-        this._memory[TIMA] = this._memory[TMA];
+      const time = this._romBank0[TIMA];
+      this._romBank0[TIMA] = (time + 1) % 0x100;
+      if (this._romBank0[TIMA] === 0) {
+        this._romBank0[TIMA] = this._romBank0[TMA];
         this.requestInterrupt('timer');
       }
     }
@@ -279,7 +331,7 @@ export class Memory {
   }
 
   _getTimerFrequency(): number {
-    const tac = this._memory[TAC] & 0x3;
+    const tac = this._romBank0[TAC] & 0x3;
     switch (tac) {
       case 0x0: return 4096;
       case 0x1: return 262144;

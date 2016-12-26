@@ -31,6 +31,9 @@ export class RegisterStore {
 
   _incr(regIndex: number): void {
     const incr = this._regs[regIndex] + 1;
+    if (!Number.isInteger(incr)) {
+      debugger;
+    }
     if (incr === 0x10000) {
       this._regs[regIndex] = 0;
     } else {
@@ -40,6 +43,9 @@ export class RegisterStore {
 
   _decr(regIndex: number): void {
     const decr = this._regs[regIndex] - 1;
+    if (!Number.isInteger(decr)) {
+      debugger;
+    }
     if (decr === -0x1) {
       this._regs[regIndex] = 0xFFFF;
     } else {
@@ -47,25 +53,71 @@ export class RegisterStore {
     }
   }
 
-  _incrLo(): void {
-    throw new Error('not implemented');
+  _incrLo(regIndex: number): void {
+    this._incr8(regIndex, false);
   }
 
   _incrHi(regIndex: number): void {
+    this._incr8(regIndex, true);
+  }
+
+  _decrLo(regIndex: number): void {
+    this._decr8(regIndex, false);
+  }
+
+  _decrHi(regIndex: number): void {
+    this._decr8(regIndex, true);
+  }
+
+  _decr8(regIndex: number, hi: boolean): void {
+    let flags = this.getF() & CARRY_MASK;
+    flags |= N_MASK;
     const value = this._regs[regIndex];
+    if (!Number.isInteger(value)) {
+      debugger;
+    }
     const lo8 = value & LO_8;
     const hi8 = value & HI_8;
-    const incr = hi8 + 1;
-    if (incr === 256) {
-      // TODO: Set Z flag and others if needed.
-      this._regs[regIndex] = lo8;
-    } else {
-      this._regs[regIndex] = incr + lo8;
+    let decr = hi ? hi8 - 1 : lo8 - 1;
+    if (decr === -1) {
+      flags |= H_MASK;
+      decr = 0xFF;
     }
+    if (decr === 0) {
+      flags |= ZERO_MASK;
+      this._regs[regIndex] = hi ? lo8 : hi8 << 8;
+    } else {
+      this._regs[regIndex] = hi ? (decr << 8) + lo8 : (hi8 << 8) + decr;
+    }
+    this.setF(flags);
+  }
+
+  _incr8(regIndex: number, hi: boolean): void {
+    let flags = this.getF() & CARRY_MASK;
+    const value = this._regs[regIndex];
+    if (!Number.isInteger(value)) {
+      debugger;
+    }
+    const lo8 = value & LO_8;
+    const hi8 = value & HI_8;
+    const incr = hi ? hi8 + 1 : lo8 + 1;
+    if (incr === 0x10) {
+      flags |= H_MASK;
+    }
+    if (incr === 256) {
+      flags |= ZERO_MASK;
+      this._regs[regIndex] = hi ? lo8 : hi8 << 8;
+    } else {
+      this._regs[regIndex] = hi ? (incr << 8) + lo8 : (hi8 << 8) + incr;
+    }
+    this.setF(flags);
   }
 
   _push(regIndex: number): void { 
     const value = this._regs[regIndex];
+    if (!Number.isInteger(value)) {
+      debugger;
+    }
     this.decrSp();
     this._memory.write(this.getSp(), value & HI_8);
     this.decrSp();
@@ -73,15 +125,37 @@ export class RegisterStore {
   }
 
   _pop(regIndex: number): void {
-    this._regs[regIndex] = this._memory.read(this.getSp());
+    const lo = this._memory.read(this.getSp());
     this.incrSp();
-    this._regs[regIndex] += (this._memory.read(this.getSp()) << 8);
+    const hi = this._memory.read(this.getSp());
     this.incrSp();
+    this._regs[regIndex] = (hi << 8) + lo;
+    if (!Number.isInteger(this._regs[regIndex])) {
+      debugger;
+    }
   }
 
-  _sub(left: number, right: number): number {
+  add(val: number): number {
+    let flags = 0x0;
+    const rawSum = this.getA() + val;
+    if (rawSum > 0xFF) {
+      flags |= CARRY_MASK;
+    }
+    const sum = rawSum % 0x100;
+    if (sum === 0) {
+      flags |= ZERO_MASK;
+    }
+    if (Boolean(((this.getA() & 0xF) + (val & 0xF)) & 0x10)) {
+      flags |= H_MASK;
+    }
+    this.setF(flags);
+    return sum;
+  }
+
+  sub(val: number): number {
     let flags = N_MASK;
-    let difference = left - right;
+    const a = this.getA();
+    let difference = a - val;
     if (difference < 0) {
       flags |= CARRY_MASK;
       difference += 0x100;
@@ -89,31 +163,59 @@ export class RegisterStore {
     if (difference === 0) {
       flags |= ZERO_MASK;
     }
-    if ((left & 0xF) - (right & 0xF) < 0) {
+    if ((a & 0xF) - (val & 0xF) < 0) {
       flags |= H_MASK;
     }
     this.setF(flags);
     return difference;
   }
 
-  _cmp(regValue: number): void {
-    this._sub(this.getA(), regValue);
+  cp(value: number): void {
+    this.sub(value);
   }
 
-  xor(value: number): void {
-    let flags = 0x0;
-    if ((value ^ this.getA()) === 0) {
+  and(value: number): number {
+    const and = this.getA() & value;
+    let flags = H_MASK;
+    if (and === 0) {
       flags |= ZERO_MASK;
     }
     this.setF(flags);
+    return and;
   }
 
-  cmpB(): void {
-    this._cmp(this.getB());
+  xor(value: number): number {
+    let flags = 0x0;
+    const xor = value ^ this.getA();
+    if (xor === 0) {
+      flags |= ZERO_MASK;
+    }
+    this.setF(flags);
+    return xor;
+  }
+
+  cpB(): void {
+    this.cp(this.getB());
+  }
+
+  popAf(): void {
+    this._pop(AF);
+  }
+
+  popBc(): void {
+    this._pop(BC);
   }
 
   popDe(): void {
     this._pop(DE);
+  }
+
+  popHl(): void {
+    this._pop(HL);
+  }
+
+  popPc(): void {
+    this._pop(PC);
   }
 
   pushBc(): void {
@@ -144,6 +246,26 @@ export class RegisterStore {
     return this._regs[BC] & HI_8;
   }
 
+  getC(): number {
+    return this._regs[BC] & LO_8;
+  }
+
+  getD(): number {
+    return this._regs[DE] & HI_8;
+  }
+
+  getE(): number {
+    return this._regs[DE] & LO_8;
+  }
+
+  getH(): number {
+    return this._regs[HL] & HI_8;
+  }
+
+  getL(): number {
+    return this._regs[HL] & LO_8;
+  }
+
   getBc(): number {
     return this._regs[BC];
   }
@@ -164,16 +286,29 @@ export class RegisterStore {
     return this._regs[HL];
   }
 
+  _setLo(byte: number, regIndex: number): void {
+    this._regs[regIndex] = (this._regs[regIndex] & HI_8) + byte;
+    if (!Number.isInteger(this._regs[regIndex])) {
+      debugger;
+    }
+  }
+
+  _setHi(byte: number, regIndex: number): void {
+    this._regs[regIndex] = (byte << 8) + (this._regs[regIndex] & LO_8);
+    if (!Number.isInteger(this._regs[regIndex])) {
+      debugger;
+    }
+  }
+
   setPc(word: number): void {
+    if (!Number.isInteger(word)) {
+      debugger;
+    }
     this._regs[PC] = word;
   }
 
-  setA(byte: number): void {
-    this._regs[AF] = (byte << 8) + (this._regs[AF] & LO_8);
-  }
-
-  setF(byte: number): void {
-    this._regs[AF] = byte + (this._regs[AF] & HI_8);
+  setAf(word: number): void {
+    this._regs[AF] = word;
   }
 
   setBc(word: number): void {
@@ -184,8 +319,100 @@ export class RegisterStore {
     this._regs[DE] = word;
   }
 
+  setHl(word: number): void {
+    this._regs[HL] = word;
+  }
+
+  setSp(word: number): void {
+    this._regs[SP] = word;
+  }
+
+  setA(byte: number): void {
+    this._setHi(byte, AF);
+  }
+
+  setF(byte: number): void {
+    this._setLo(byte, AF);
+  }
+
+  setB(byte: number): void {
+    this._setHi(byte, BC);
+  }
+
+  setC(byte: number): void {
+    this._setLo(byte, BC);
+  }
+
+  setD(byte: number): void {
+    this._setHi(byte, DE);
+  }
+
+  setE(byte: number): void {
+    this._setLo(byte, DE);
+  }
+
+  setH(byte: number): void {
+    this._setHi(byte, HL);
+  }
+
+  setL(byte: number): void {
+    this._setLo(byte, HL);
+  }
+
+  decrA(): void {
+    this._decrHi(AF);
+  }
+
+  decrB(): void {
+    this._decrHi(BC);
+  }
+
+  decrC(): void {
+    this._decrLo(BC);
+  }
+
+  decrD(): void {
+    this._decrHi(DE);
+  }
+
+  decrE(): void {
+    this._decrLo(DE);
+  }
+
+  decrH(): void {
+    this._decrHi(HL);
+  }
+
+  decrL(): void {
+    this._decrLo(HL);
+  }
+
   incrA(): void {
     this._incrHi(AF);
+  }
+
+  incrB(): void {
+    this._incrHi(BC);
+  }
+
+  incrC(): void {
+    this._incrLo(BC);
+  }
+
+  incrD(): void {
+    this._incrHi(DE);
+  }
+
+  incrE(): void {
+    this._incrLo(DE);
+  }
+
+  incrH(): void {
+    this._incrHi(HL);
+  }
+
+  incrL(): void {
+    this._incrLo(HL);
   }
 
   incrBc(): void {
