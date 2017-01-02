@@ -8,7 +8,5 @@ const rom = fs.readFileSync(`${__dirname}/../pokemonblue.gb`);
 const clock = new Clock();
 const memory = new Memory(rom, clock);
 const cpu = new Cpu(clock, memory);
-new Display(clock, memory); // TODO turn this into a function?
-while (true) {
-  cpu.next();
-}
+new Display(clock, memory);
+cpu.next();

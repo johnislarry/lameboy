@@ -1,5 +1,5 @@
 import { Clock } from './Clock';
-import { Memory, Color, LY, LYC, LCDC, STAT } from './Memory';
+import { Memory, Color, LY, LYC, LCDC, STAT, SCX, SCY } from './Memory';
 
 type ModeToBits = {
   hBlank: 0,
@@ -44,6 +44,9 @@ export class Display {
     this._visibleBuffer = new Uint8ClampedArray(SCREEN_X * SCREEN_Y);
     this._canvasContext = this._createCanvas();
     this._displayEnabled = true;
+    // We watch writes to this LCDC register to know when to re-schedule jobs
+    // when the bit has been set again.
+    this._memory.watch(LCDC, this._onLcdcWrite.bind(this));
     this._handleMode('searching');
   }
 
@@ -51,10 +54,8 @@ export class Display {
     const displayEnable = Boolean(this._memory.read(LCDC) & DISPLAY_ENABLE_MASK);
     if (!displayEnable) {
       // If the display has been turned off then we will just exit here and no more display jobs
-      // will be scheuled.  We watch writes to this LCDC register to know when to re-schedule jobs
-      // when the bit has been set again.
+      // will be scheuled.
       this._displayEnabled = false;
-      this._memory.watch(LCDC, this._onLcdcWrite.bind(this));
       return;
     }
     switch (mode) {
@@ -158,9 +159,14 @@ export class Display {
         let lo = byte0 & 0x1;
         const colorIndex = (hi << 1) | lo;
         const color = colors[colorIndex];
+        const scX = this._memory.read(SCX);
+        const scY = this._memory.read(SCY);
         // TODO ugh
-        const bufferIndex =
-          4 * ((Math.floor(tileIndex / 0x20) * 0x20) + (tileIndex % 0x20) + Math.floor(j / 2) * k);
+        const unscrolledBufferIndex =
+          ((Math.floor(tileIndex / 0x20) * 0x20) + (tileIndex % 0x20) + Math.floor(j / 2) * k);
+        const bufferY = (Math.floor(unscrolledBufferIndex / 0x100) + scY) % 0x100;
+        const bufferX = (unscrolledBufferIndex % 0x100 + scX) % 0x100;
+        const bufferIndex = 4 * (bufferY * 0x100 + bufferX);
         this._fullBuffer[bufferIndex] = color.red;
         this._fullBuffer[bufferIndex + 1] = color.green;
         this._fullBuffer[bufferIndex + 2] = color.blue;

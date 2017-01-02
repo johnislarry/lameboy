@@ -1,8 +1,8 @@
-import {Memory} from './Memory';
+import { Memory } from './Memory';
 
 type Flag = 'zero' | 'carry' | 'n' | 'h';
 type FlagInfo = {
-  [P in Flag]: boolean;
+[P in Flag]: boolean;
 };
 
 const [AF, BC, DE, HL, SP, PC] = [0, 1, 2, 3, 4, 5];
@@ -77,7 +77,7 @@ export class RegisterStore {
       debugger;
     }
     const lo8 = value & LO_8;
-    const hi8 = value & HI_8;
+    const hi8 = (value & HI_8) >> 8;
     let decr = hi ? hi8 - 1 : lo8 - 1;
     if (decr === -1) {
       flags |= H_MASK;
@@ -99,7 +99,7 @@ export class RegisterStore {
       debugger;
     }
     const lo8 = value & LO_8;
-    const hi8 = value & HI_8;
+    const hi8 = (value & HI_8) >> 8;
     const incr = hi ? hi8 + 1 : lo8 + 1;
     if (incr === 0x10) {
       flags |= H_MASK;
@@ -113,13 +113,13 @@ export class RegisterStore {
     this.setF(flags);
   }
 
-  _push(regIndex: number): void { 
+  _push(regIndex: number): void {
     const value = this._regs[regIndex];
     if (!Number.isInteger(value)) {
       debugger;
     }
     this.decrSp();
-    this._memory.write(this.getSp(), value & HI_8);
+    this._memory.write(this.getSp(), (value & HI_8) >> 8);
     this.decrSp();
     this._memory.write(this.getSp(), value & LO_8);
   }
@@ -133,6 +133,32 @@ export class RegisterStore {
     if (!Number.isInteger(this._regs[regIndex])) {
       debugger;
     }
+  }
+
+  rrca(): void {
+    let flags = 0x0;
+    const bit0Set = Boolean(this.getA() & 0x1);
+    let rotatedA = this.getA() >> 1;
+    if (bit0Set) {
+      flags |= CARRY_MASK;
+      rotatedA |= 0x80;
+    }
+    this.setA(rotatedA);
+    this.setF(flags);
+  }
+
+  rra(): void {
+    let flags = 0x0;
+    const bit0Set = Boolean(this.getA() & 0x1);
+    let rotatedA = this.getA() >> 1;
+    if (bit0Set) {
+      flags |= CARRY_MASK;
+    }
+    if (this.getFlagInfo().carry) {
+      rotatedA |= 0x80;
+    }
+    this.setA(rotatedA);
+    this.setF(flags);
   }
 
   add(val: number): number {
@@ -194,6 +220,11 @@ export class RegisterStore {
     return xor;
   }
 
+  resetA(bit: number): void {
+    const mask = getMaskFromBit(bit);
+    this.setA(this.getA() & (~mask));
+  }
+
   cpB(): void {
     this.cp(this.getB());
   }
@@ -235,15 +266,15 @@ export class RegisterStore {
   }
 
   getA(): number {
-    return this._regs[AF] & HI_8;
+    return (this._regs[AF] & HI_8) >> 8;
   }
-  
+
   getF(): number {
     return this._regs[AF] & LO_8;
   }
-  
+
   getB(): number {
-    return this._regs[BC] & HI_8;
+    return (this._regs[BC] & HI_8) >> 8;
   }
 
   getC(): number {
@@ -251,7 +282,7 @@ export class RegisterStore {
   }
 
   getD(): number {
-    return this._regs[DE] & HI_8;
+    return (this._regs[DE] & HI_8) >> 8;
   }
 
   getE(): number {
@@ -259,7 +290,7 @@ export class RegisterStore {
   }
 
   getH(): number {
-    return this._regs[HL] & HI_8;
+    return (this._regs[HL] & HI_8) >> 8;
   }
 
   getL(): number {
@@ -443,5 +474,19 @@ export class RegisterStore {
       n: Boolean(flags & N_MASK),
       h: Boolean(flags & H_MASK),
     };
+  }
+}
+
+function getMaskFromBit(bit: number): number {
+  switch (bit) {
+    case 0: return 0x1;
+    case 1: return 0x2;
+    case 2: return 0x4;
+    case 3: return 0x8;
+    case 4: return 0x10;
+    case 5: return 0x20;
+    case 6: return 0x40;
+    case 7: return 0x80;
+    default: throw new Error(`Bad bit: ${bit}`);
   }
 }

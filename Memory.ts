@@ -2,6 +2,7 @@ import { MemoryController } from './MemoryController';
 import { Mbc3 } from './Mbc3';
 import { Clock } from './Clock';
 import { CLOCK_SPEED } from './Cpu';
+import { decToHex } from './common';
 
 type InterruptName = 'vBlank' | 'lcdStat' | 'timer' | 'serial' | 'joypad';
 type InterruptVector = 0x40 | 0x48 | 0x50 | 0x58 | 0x60;
@@ -28,6 +29,8 @@ const INTERRUPT_NAMES: InterruptName[] = ['vBlank', 'lcdStat', 'timer', 'serial'
 
 const INTERRUPT_ENABLE_REG = 0xFFFF;
 const INTERRUPT_REQUEST_REG = 0xFF0F;
+const SB = 0xFF01;
+const SC = 0xFF02;
 const DIV = 0xFF04;
 const TIMA = 0xFF05;
 const TMA = 0xFF06;
@@ -52,8 +55,8 @@ const NR51 = 0xFF25;
 const NR52 = 0xFF26;
 export const LCDC = 0xFF40;
 export const STAT = 0xFF41;
-const SCY = 0xFF42;
-const SCX = 0xFF43;
+export const SCY = 0xFF42;
+export const SCX = 0xFF43;
 export const LY = 0xFF44;
 export const LYC = 0xFF45;
 const BGP = 0xFF47;
@@ -107,9 +110,8 @@ export class Memory {
   }
 
   write(addr: number, data: number): void {
-    const watches = this._watches.get(addr);
-    if (watches != null) {
-      watches.forEach(watch => watch(data));
+    if (data >> 8) {
+      throw new Error(`Writing data bigger than a byte: ${data}`);
     }
     if (0x0 <= addr && addr < 0x2000) {
       this._controller.enableRam(data);
@@ -130,17 +132,31 @@ export class Memory {
         this._writeBgpd(data);
       } else if (addr === OBPD) {
         this._writeObpd(data);
-      } else if (addr === LY) {
-        this._writeHram(LY, 0x0);
-      } else if (addr === LCDC) {
-        this._writeHram(LCDC, 0x0);
-      } else if (addr === DIV) {
-        this._writeHram(DIV, 0x0);
-      } else {
+      } else if (addr === SB || addr === SC) {
+        // TODO: figure out a story for the link cable stuff.
         this._writeHram(addr, data);
+      } else if (addr === TIMA || addr === TMA || addr === DIV || addr === TAC) {
+        this._writeHram(addr, data);
+      } else if (addr === WX || addr === WY) {
+        // TODO: figure out a window story
+        this._writeHram(addr, data);
+      } else if (addr === LY) {
+        this._writeHram(addr, 0x0);
+      } else if (addr === LCDC || addr === STAT || addr === SCX || addr === SCY || addr === LYC) {
+        this._writeHram(addr, data);
+      } else if (addr === BGP || addr === OBP0 || addr === OBP1) {
+        this._writeHram(addr, data);
+      } else if (0xFF80 <= addr && addr < 0x10000) {
+        this._writeHram(addr, data);
+      } else {
+        throw new Error(`unsupported write of ${data} at: ${decToHex(addr)}`);
       }
     } else {
-      throw new Error(`unsupported write at: ${addr}`);
+      throw new Error(`unsupported write of ${data} at: ${decToHex(addr)}`);
+    }
+    const watches = this._watches.get(addr);
+    if (watches != null) {
+      watches.forEach(watch => watch(data));
     }
   }
 
@@ -160,11 +176,21 @@ export class Memory {
         return this._readObpd();
       } else if (addr === BGPD) {
         return this._readBgpd();
-      } else {
+      } else if (addr === LCDC || addr === STAT || addr === LY || addr === LYC) {
         return this._readHram(addr);
+      } else if (addr === INTERRUPT_REQUEST_REG) {
+        return this._readHram(addr);
+      } else if (addr === TIMA || addr === TMA || addr === DIV || addr === TAC) {
+        return this._readHram(addr);
+      } else if (addr === BGP || addr === OBP0 || addr === OBP1) {
+        return this._readHram(addr);
+      } else if (0xFF80 <= addr && addr < 0x10000) {
+        return this._readHram(addr);
+      } else {
+        throw new Error(`Reading unsupported address: ${decToHex(addr)}`);
       }
     } else {
-      throw new Error(`Reading unsupported address: ${addr}`);
+      throw new Error(`Reading unsupported address: ${decToHex(addr)}`);
     }
   }
 
@@ -185,6 +211,7 @@ export class Memory {
       return this._wramBanks[svbk][addr - 0xD000];
     }
   }
+
   _writeHram(addr: number, data: number): void {
     this._hram[addr - 0xFF00] = data;
   }
@@ -311,18 +338,18 @@ export class Memory {
   }
 
   _incrementDiv(): void {
-    const time = this._romBank0[DIV];
-    this._romBank0[DIV] = (time + 1) % 0x100;
+    const time = this.read(DIV);
+    this.write(DIV, (time + 1) % 0x100);
     this._clock.schedule(hzToCycles(DIV_FREQ), () => this._incrementDiv());
   }
 
   _incrementTima(): void {
-    const timerEnable = Boolean(this._romBank0[TAC] & 0x4);
+    const timerEnable = Boolean(this.read(TAC) & 0x4);
     if (timerEnable) {
-      const time = this._romBank0[TIMA];
-      this._romBank0[TIMA] = (time + 1) % 0x100;
-      if (this._romBank0[TIMA] === 0) {
-        this._romBank0[TIMA] = this._romBank0[TMA];
+      const time = this.read(TIMA);
+      this.write(TIMA, (time + 1) % 0x100);
+      if (this.read(TIMA) === 0) {
+        this.write(TIMA, this.read(TMA));
         this.requestInterrupt('timer');
       }
     }
@@ -331,7 +358,7 @@ export class Memory {
   }
 
   _getTimerFrequency(): number {
-    const tac = this._romBank0[TAC] & 0x3;
+    const tac = this.read(TAC) & 0x3;
     switch (tac) {
       case 0x0: return 4096;
       case 0x1: return 262144;
@@ -342,37 +369,37 @@ export class Memory {
   }
 
   _initialize(): void {
-    this.write(TIMA, 0x00);
-    this.write(TMA, 0x00);
-    this.write(TAC, 0x00);
-    this.write(NR10, 0x80);
-    this.write(NR11, 0xBF);
-    this.write(NR12, 0xF3);
-    this.write(NR14, 0xBF);
-    this.write(NR21, 0x3F);
-    this.write(NR22, 0x00);
-    this.write(NR24, 0xBF);
-    this.write(NR30, 0x7F);
-    this.write(NR31, 0xFF);
-    this.write(NR32, 0x9F);
-    this.write(NR33, 0xBF);
-    this.write(NR41, 0xFF);
-    this.write(NR42, 0x00);
-    this.write(NR43, 0x00);
-    this.write(NR44, 0xBF);
-    this.write(NR50, 0x77);
-    this.write(NR51, 0xF3);
-    this.write(NR52, 0xF1);
-    this.write(STAT, 0x91);
-    this.write(SCY, 0x00);
-    this.write(SCX, 0x00);
-    this.write(LYC, 0x00);
-    this.write(BGP, 0xFC);
-    this.write(OBP0, 0xFF);
-    this.write(OBP1, 0xFF);
-    this.write(WY, 0x00);
-    this.write(WX, 0x00);
-    this.write(IE, 0x00);
+    this._writeHram(TIMA, 0x00);
+    this._writeHram(TMA, 0x00);
+    this._writeHram(TAC, 0x00);
+    this._writeHram(NR10, 0x80);
+    this._writeHram(NR11, 0xBF);
+    this._writeHram(NR12, 0xF3);
+    this._writeHram(NR14, 0xBF);
+    this._writeHram(NR21, 0x3F);
+    this._writeHram(NR22, 0x00);
+    this._writeHram(NR24, 0xBF);
+    this._writeHram(NR30, 0x7F);
+    this._writeHram(NR31, 0xFF);
+    this._writeHram(NR32, 0x9F);
+    this._writeHram(NR33, 0xBF);
+    this._writeHram(NR41, 0xFF);
+    this._writeHram(NR42, 0x00);
+    this._writeHram(NR43, 0x00);
+    this._writeHram(NR44, 0xBF);
+    this._writeHram(NR50, 0x77);
+    this._writeHram(NR51, 0xF3);
+    this._writeHram(NR52, 0xF1);
+    this._writeHram(STAT, 0x91);
+    this._writeHram(SCY, 0x00);
+    this._writeHram(SCX, 0x00);
+    this._writeHram(LYC, 0x00);
+    this._writeHram(BGP, 0xFC);
+    this._writeHram(OBP0, 0xFF);
+    this._writeHram(OBP1, 0xFF);
+    this._writeHram(WY, 0x00);
+    this._writeHram(WX, 0x00);
+    this._writeHram(IE, 0x00);
   }
 }
 

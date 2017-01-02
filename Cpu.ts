@@ -1,6 +1,7 @@
 import { Clock } from './Clock';
 import { Memory, Interrupt } from './Memory';
 import { RegisterStore } from './RegisterStore';
+import { decToHex } from './common';
 import dedent = require('dedent');
 
 type OpcodeSize = 1 | 2 | 3;
@@ -33,14 +34,19 @@ export class Cpu {
   next(): void {
     const pc = this._regs.getPc();
     const code = this._memory.read(pc);
-    const {size, execute} = this._getOpcode(code);
+    const {size, execute} = code === 0xCB
+      ? this._getPrefixCbOpcode()
+      : this._getOpcode(code);
     const duration = this._executeOpcode(execute, size, pc, code);
     this._clock.advance(duration);
     this._processInterrupts();
-    this._regs.incrPc();
+    for (let i = 0; i < size; i++) {
+      this._regs.incrPc();
+    }
     if (isNaN(this._regs.getPc())) {
       debugger;
     }
+    window.setImmediate(() => this.next());
   }
 
   _processInterrupts(): void {
@@ -73,6 +79,9 @@ export class Cpu {
     pc: number,
     opcode: number,
   ): number {
+    if (opcode === 0xCB) {
+      return 4 + execute();
+    }
     switch (size) {
       case 1: return execute();
       case 2: return execute(this._memory.read(pc + 1));
@@ -120,11 +129,19 @@ export class Cpu {
           return 8;
         },
       };
+      case 0xF: return {
+        mnemonic: 'RRCA',
+        size: 1,
+        execute: () => {
+          this._regs.rrca();
+          return 4;
+        },
+      };
       case 0x11: return {
         mnemonic: 'LD DE,d16',
         size: 3,
-        execute: (args: number) => {
-          this._regs.setDe(args);
+        execute: (arg: number) => {
+          this._regs.setDe(arg);
           return 12;
         },
       };
@@ -160,6 +177,14 @@ export class Cpu {
         execute: () => {
           this._regs.setA(this._memory.read(this._regs.getDe()));
           return 8;
+        },
+      };
+      case 0x1F: return {
+        mnemonic: 'RRA',
+        size: 1,
+        execute: () => {
+          this._regs.rra();
+          return 4;
         },
       };
       case 0x20: return {
@@ -226,9 +251,9 @@ export class Cpu {
       case 0x28: return {
         mnemonic: 'JR Z,r8',
         size: 2,
-        execute: (args: number) => {
+        execute: (arg: number) => {
           if (this._regs.getFlagInfo().zero) {
-            this._regs.setPc(this._regs.getPc() + u8ToI8(args));
+            this._regs.setPc(this._regs.getPc() + u8ToI8(arg));
             return 12;
           }
           return 8;
@@ -261,9 +286,25 @@ export class Cpu {
       case 0x3E: return {
         mnemonic: 'LD A,d8',
         size: 2,
-        execute: (args: number) => {
-          this._regs.setA(args);
+        execute: (arg: number) => {
+          this._regs.setA(arg);
           return 8;
+        },
+      };
+      case 0x40: return {
+        mnemonic: 'LD B,B',
+        size: 1,
+        execute: () => {
+          this._regs.setB(this._regs.getB());
+          return 4;
+        },
+      };
+      case 0x41: return {
+        mnemonic: 'LD B,C',
+        size: 1,
+        execute: () => {
+          this._regs.setB(this._regs.getC());
+          return 4;
         },
       };
       case 0x42: return {
@@ -279,6 +320,358 @@ export class Cpu {
         size: 1,
         execute: () => {
           this._regs.setB(this._regs.getE());
+          return 4;
+        },
+      };
+      case 0x44: return {
+        mnemonic: 'LD B,H',
+        size: 1,
+        execute: () => {
+          this._regs.setB(this._regs.getH());
+          return 4;
+        },
+      };
+      case 0x45: return {
+        mnemonic: 'LD B,L',
+        size: 1,
+        execute: () => {
+          this._regs.setB(this._regs.getL());
+          return 4;
+        },
+      };
+      case 0x46: return {
+        mnemonic: 'LD B,(HL)',
+        size: 1,
+        execute: () => {
+          this._regs.setB(this._memory.read(this._regs.getHl()));
+          return 8;
+        },
+      };
+      case 0x47: return {
+        mnemonic: 'LD B,A',
+        size: 1,
+        execute: () => {
+          this._regs.setB(this._regs.getA());
+          return 4;
+        },
+      };
+      case 0x48: return {
+        mnemonic: 'LD C,B',
+        size: 1,
+        execute: () => {
+          this._regs.setC(this._regs.getB());
+          return 4;
+        },
+      };
+      case 0x49: return {
+        mnemonic: 'LD C,C',
+        size: 1,
+        execute: () => {
+          this._regs.setC(this._regs.getC());
+          return 4;
+        },
+      };
+      case 0x4A: return {
+        mnemonic: 'LD C,D',
+        size: 1,
+        execute: () => {
+          this._regs.setC(this._regs.getD());
+          return 4;
+        },
+      };
+      case 0x4B: return {
+        mnemonic: 'LD C,E',
+        size: 1,
+        execute: () => {
+          this._regs.setC(this._regs.getE());
+          return 4;
+        },
+      };
+      case 0x4C: return {
+        mnemonic: 'LD C,H',
+        size: 1,
+        execute: () => {
+          this._regs.setC(this._regs.getH());
+          return 4;
+        },
+      };
+      case 0x4D: return {
+        mnemonic: 'LD C,L',
+        size: 1,
+        execute: () => {
+          this._regs.setC(this._regs.getL());
+          return 4;
+        },
+      };
+      case 0x4E: return {
+        mnemonic: 'LD C,(HL)',
+        size: 1,
+        execute: () => {
+          this._regs.setC(this._memory.read(this._regs.getHl()));
+          return 4;
+        },
+      };
+      case 0x4F: return {
+        mnemonic: 'LD C,A',
+        size: 1,
+        execute: () => {
+          this._regs.setC(this._regs.getA());
+          return 4;
+        },
+      };
+      case 0x50: return {
+        mnemonic: 'LD D,B',
+        size: 1,
+        execute: () => {
+          this._regs.setD(this._regs.getB());
+          return 4;
+        },
+      };
+      case 0x51: return {
+        mnemonic: 'LD D,C',
+        size: 1,
+        execute: () => {
+          this._regs.setD(this._regs.getC());
+          return 4;
+        },
+      };
+      case 0x52: return {
+        mnemonic: 'LD D,D',
+        size: 1,
+        execute: () => {
+          this._regs.setD(this._regs.getD());
+          return 4;
+        },
+      };
+      case 0x53: return {
+        mnemonic: 'LD D,E',
+        size: 1,
+        execute: () => {
+          this._regs.setD(this._regs.getE());
+          return 4;
+        },
+      };
+      case 0x54: return {
+        mnemonic: 'LD D,H',
+        size: 1,
+        execute: () => {
+          this._regs.setD(this._regs.getH());
+          return 4;
+        },
+      };
+      case 0x55: return {
+        mnemonic: 'LD D,L',
+        size: 1,
+        execute: () => {
+          this._regs.setD(this._regs.getL());
+          return 4;
+        },
+      };
+      case 0x56: return {
+        mnemonic: 'LD D,(HL)',
+        size: 1,
+        execute: () => {
+          this._regs.setD(this._memory.read(this._regs.getHl()));
+          return 8;
+        },
+      };
+      case 0x57: return {
+        mnemonic: 'LD D,A',
+        size: 1,
+        execute: () => {
+          this._regs.setD(this._regs.getA());
+          return 4;
+        },
+      };
+      case 0x58: return {
+        mnemonic: 'LD E,B',
+        size: 1,
+        execute: () => {
+          this._regs.setE(this._regs.getB());
+          return 4;
+        },
+      };
+      case 0x59: return {
+        mnemonic: 'LD E,C',
+        size: 1,
+        execute: () => {
+          this._regs.setE(this._regs.getC());
+          return 4;
+        },
+      };
+      case 0x5A: return {
+        mnemonic: 'LD E,D',
+        size: 1,
+        execute: () => {
+          this._regs.setE(this._regs.getD());
+          return 4;
+        },
+      };
+      case 0x5B: return {
+        mnemonic: 'LD E,E',
+        size: 1,
+        execute: () => {
+          this._regs.setE(this._regs.getE());
+          return 4;
+        },
+      };
+      case 0x5C: return {
+        mnemonic: 'LD E,H',
+        size: 1,
+        execute: () => {
+          this._regs.setE(this._regs.getH());
+          return 4;
+        },
+      };
+      case 0x5D: return {
+        mnemonic: 'LD E,L',
+        size: 1,
+        execute: () => {
+          this._regs.setE(this._regs.getL());
+          return 4;
+        },
+      };
+      case 0x5E: return {
+        mnemonic: 'LD E,(HL)',
+        size: 1,
+        execute: () => {
+          this._regs.setE(this._memory.read(this._regs.getHl()));
+          return 8;
+        },
+      };
+      case 0x5F: return {
+        mnemonic: 'LD E,A',
+        size: 1,
+        execute: () => {
+          this._regs.setE(this._regs.getA());
+          return 4;
+        },
+      };
+      case 0x60: return {
+        mnemonic: 'LD H,B',
+        size: 1,
+        execute: () => {
+          this._regs.setH(this._regs.getB());
+          return 4;
+        },
+      };
+      case 0x61: return {
+        mnemonic: 'LD H,C',
+        size: 1,
+        execute: () => {
+          this._regs.setH(this._regs.getC());
+          return 4;
+        },
+      };
+      case 0x62: return {
+        mnemonic: 'LD H,D',
+        size: 1,
+        execute: () => {
+          this._regs.setH(this._regs.getD());
+          return 4;
+        },
+      };
+      case 0x63: return {
+        mnemonic: 'LD H,E',
+        size: 1,
+        execute: () => {
+          this._regs.setH(this._regs.getE());
+          return 4;
+        },
+      };
+      case 0x64: return {
+        mnemonic: 'LD H,H',
+        size: 1,
+        execute: () => {
+          this._regs.setH(this._regs.getH());
+          return 4;
+        },
+      };
+      case 0x65: return {
+        mnemonic: 'LD H,L',
+        size: 1,
+        execute: () => {
+          this._regs.setH(this._regs.getL());
+          return 4;
+        },
+      };
+      case 0x66: return {
+        mnemonic: 'LD H,(HL)',
+        size: 1,
+        execute: () => {
+          this._regs.setH(this._memory.read(this._regs.getHl()));
+          return 8;
+        },
+      };
+      case 0x67: return {
+        mnemonic: 'LD H,A',
+        size: 1,
+        execute: () => {
+          this._regs.setH(this._regs.getA());
+          return 4;
+        },
+      };
+      case 0x68: return {
+        mnemonic: 'LD L,B',
+        size: 1,
+        execute: () => {
+          this._regs.setL(this._regs.getB());
+          return 4;
+        },
+      };
+      case 0x69: return {
+        mnemonic: 'LD L,C',
+        size: 1,
+        execute: () => {
+          this._regs.setL(this._regs.getC());
+          return 4;
+        },
+      };
+      case 0x6A: return {
+        mnemonic: 'LD L,D',
+        size: 1,
+        execute: () => {
+          this._regs.setL(this._regs.getD());
+          return 4;
+        },
+      };
+      case 0x6B: return {
+        mnemonic: 'LD L,E',
+        size: 1,
+        execute: () => {
+          this._regs.setL(this._regs.getE());
+          return 4;
+        },
+      };
+      case 0x6C: return {
+        mnemonic: 'LD L,H',
+        size: 1,
+        execute: () => {
+          this._regs.setL(this._regs.getH());
+          return 4;
+        },
+      };
+      case 0x6D: return {
+        mnemonic: 'LD L,L',
+        size: 1,
+        execute: () => {
+          this._regs.setL(this._regs.getL());
+          return 4;
+        },
+      };
+      case 0x6E: return {
+        mnemonic: 'LD L,(HL)',
+        size: 1,
+        execute: () => {
+          this._regs.setL(this._memory.read(this._regs.getHl()));
+          return 8;
+        },
+      };
+      case 0x6F: return {
+        mnemonic: 'LD L,A',
+        size: 1,
+        execute: () => {
+          this._regs.setL(this._regs.getA());
           return 4;
         },
       };
@@ -529,7 +922,7 @@ export class Cpu {
       case 0xF0: return {
         mnemonic: 'LDH A,(a8)',
         size: 2,
-        execute: (arg) => {
+        execute: (arg: number) => {
           this._regs.setA(this._memory.read(0xFF00 + arg));
           return 12;
         },
@@ -583,10 +976,23 @@ export class Cpu {
   _return(): void {
     this._regs.popPc();
   }
-}
 
-function decToHex(opcode: number): string {
-  return Number(opcode).toString(16).toUpperCase();
+  _getPrefixCbOpcode(): Opcode {
+    debugger;
+    // The PC is on the CB instruction, we need the byte after it.
+    const opcode = this._memory.read(this._regs.getPc() + 1);
+    switch (opcode) {
+      case 0x87: return {
+        mnemonic: 'RES 0,A',
+        size: 2,
+        execute: () => {
+          this._regs.resetA(0);
+          return 8;
+        },
+      };
+      default: throw new Error(`Unimplemented CB: 0x${decToHex(opcode)}`);
+    }
+  }
 }
 
 function u8ToI8(u8: number): number {
